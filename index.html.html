@@ -1,0 +1,835 @@
+<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#fff;color:#000}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style></head><body>
+<title>Cap Inspection Simulator</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700&family=JetBrains+Mono:wght@400;600&family=Oswald:wght@500;600&display=swap">
+<style>
+/* Layout: one control-room page. Left column = belt scene, live ADC gauge, controls. Right column = virtual ESP32 hardware, reject queue, counters, log. Single column on phones. */
+:root{
+  --bg:#EEF2F1; --surface:#FFFFFF; --surface-2:#E6ECEB; --fg:#13222A; --muted:#566871; --line:#CCD6D8; --line-strong:#8FA3AA;
+  --accent:#17607A; --accent-fg:#FFFFFF;
+  --good:#167A4E; --warn:#A15F00; --bad:#C0392B; --none:#7B8C93;
+  --glass:#DCEBEE; --oil:#E1A93B; --on-oil:#13222A; --cap:#17607A; --belt:#3A4A52; --belt-line:#55666E;
+  --oled-bg:#050B0E; --oled-fg:#8BE9FF;
+  --font-display:'Oswald','Arial Narrow',Arial,sans-serif; --font-body:'DM Sans',system-ui,-apple-system,'Segoe UI',Arial,sans-serif; --font-mono:'JetBrains Mono',ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#0C171C; --surface:#13242B; --surface-2:#1B323B; --fg:#E5EEF0; --muted:#8CA2AA; --line:#25414B; --line-strong:#5B7C87;
+    --accent:#52B8D4; --accent-fg:#06222B;
+    --good:#3FC48D; --warn:#E7A63E; --bad:#F0705D; --none:#7D9199;
+    --glass:#1E3A44; --oil:#D9A441; --cap:#52B8D4; --belt:#243A43; --belt-line:#3A5560;
+    color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#0C171C; --surface:#13242B; --surface-2:#1B323B; --fg:#E5EEF0; --muted:#8CA2AA; --line:#25414B; --line-strong:#5B7C87;
+  --accent:#52B8D4; --accent-fg:#06222B;
+  --good:#3FC48D; --warn:#E7A63E; --bad:#F0705D; --none:#7D9199;
+  --glass:#1E3A44; --oil:#D9A441; --cap:#52B8D4; --belt:#243A43; --belt-line:#3A5560;
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--fg);font-family:var(--font-body);font-size:15px;line-height:1.5;padding-block:20px 28px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+.wrap{max-width:1240px;margin:0 auto;display:flex;flex-direction:column;gap:16px}
+header.top{display:flex;flex-wrap:wrap;align-items:flex-end;justify-content:space-between;gap:12px}
+.eyebrow{font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);font-weight:500}
+h1{font-family:var(--font-display);font-weight:600;font-size:32px;line-height:1.1;letter-spacing:.01em;text-wrap:balance}
+.specs{font-family:var(--font-mono);font-size:12.5px;color:var(--muted);margin-top:6px}
+.chip{display:inline-flex;align-items:center;gap:8px;padding:6px 12px;border-radius:999px;border:1px solid var(--line);background:var(--surface);font-weight:500;font-size:14px}
+.chip::before{content:"";width:9px;height:9px;border-radius:50%;background:var(--good)}
+.chip.paused::before{background:var(--none)}
+.chip.fault{border-color:var(--bad);color:var(--bad)}
+.chip.fault::before{background:var(--bad)}
+.grid{display:grid;gap:16px;grid-template-columns:minmax(0,1fr)}
+@media (min-width:980px){.grid{grid-template-columns:minmax(0,1.5fr) minmax(0,1fr)}}
+.col{display:flex;flex-direction:column;gap:16px;min-width:0}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:16px;min-width:0}
+h2{font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);font-weight:700;margin-bottom:12px}
+h3.label{font-size:13px;font-weight:700;color:var(--muted);margin:16px 0 8px}
+svg.scene{display:block;width:100%;height:auto}
+.scene .belt{fill:var(--belt)}
+.scene .belt-line{stroke:var(--belt-line);stroke-width:3}
+.scene .leg{fill:var(--belt-line)}
+.scene .guide{stroke:var(--line-strong);stroke-width:1.5;stroke-dasharray:4 5;fill:none}
+.scene .dim{stroke:var(--muted);stroke-width:2;fill:none}
+.scene .t{font:500 20px var(--font-body);fill:var(--muted)}
+.scene .t-fg{font:700 24px var(--font-mono);fill:var(--fg)}
+.scene .head{fill:var(--surface-2);stroke:var(--line-strong);stroke-width:2}
+.scene .beam{stroke:var(--muted);stroke-width:3;stroke-dasharray:4 5}
+.scene .beam.on{stroke:var(--accent);stroke-width:5;stroke-dasharray:none}
+.scene .arm{fill:var(--line-strong)}
+.scene .bin{fill:none;stroke:var(--line-strong);stroke-width:3}
+.scene .b-body{fill:var(--glass);stroke:var(--line-strong);stroke-width:2}
+.scene .b-oil{fill:var(--oil);opacity:.8}
+.scene .b-cap{fill:var(--cap)}
+.scene .b-empty{fill:none;stroke:var(--none);stroke-width:2;stroke-dasharray:6 6}
+.scene .b-tag{font:700 17px var(--font-body);fill:var(--on-oil)}
+.readout{display:flex;flex-wrap:wrap;align-items:baseline;justify-content:space-between;gap:8px 16px;margin-bottom:12px}
+.adc{font-family:var(--font-mono);font-weight:600;font-size:44px;line-height:1;font-variant-numeric:tabular-nums}
+.adc small{font-size:14px;color:var(--muted);font-weight:400;margin-left:6px}
+.verdict{display:inline-block;padding:4px 12px;border-radius:6px;font-weight:700;font-size:15px;border:1.5px solid currentColor}
+.v-good{color:var(--good)} .v-loose{color:var(--warn)} .v-missing{color:var(--bad)} .v-none{color:var(--none)}
+.gauge{position:relative;height:22px;display:flex;border-radius:6px;overflow:hidden;border:1px solid var(--line)}
+.gauge i{display:block;height:100%}
+.g-none{background:var(--none);width:5.86%} .g-missing{background:var(--bad);width:17.34%} .g-loose{background:var(--warn);width:28.16%} .g-good{background:var(--good);width:48.64%}
+.gwrap{position:relative;padding-top:10px}
+.needle{position:absolute;top:0;width:0;height:44px;border-left:3px solid var(--fg);left:0;z-index:2}
+.needle::before{content:"";position:absolute;top:-1px;left:-8px;border:6px solid transparent;border-top:8px solid var(--fg)}
+.ticks{position:relative;height:22px;margin-top:4px;font-family:var(--font-mono);font-size:12px;color:var(--muted)}
+.ticks span{position:absolute;top:0;transform:translateX(-50%)}
+.ticks span:last-child{transform:translateX(-100%)}
+.legend{display:flex;flex-wrap:wrap;gap:6px 14px;margin-top:10px;font-size:13px}
+.legend span{display:inline-flex;align-items:center;gap:6px}
+.legend b{width:10px;height:10px;border-radius:2px;display:inline-block}
+.lastpass{margin-top:10px;font-size:14px;color:var(--muted)}
+.row,.btnrow{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.btnrow{margin-bottom:8px}
+.btn,.seg button{font:500 14px var(--font-body);color:var(--fg);background:var(--surface-2);border:1px solid var(--line);border-radius:8px;padding:8px 12px;cursor:pointer;min-height:40px}
+.btn:hover,.seg button:hover{border-color:var(--line-strong)}
+.btn.primary{background:var(--accent);color:var(--accent-fg);border-color:var(--accent)}
+.btn[aria-pressed="true"]{background:var(--accent);color:var(--accent-fg);border-color:var(--accent)}
+.seg{display:inline-flex;flex-wrap:wrap;border-radius:8px}
+.seg button{border-radius:0;margin-left:-1px}
+.seg button:first-child{border-radius:8px 0 0 8px;margin-left:0}
+.seg button:last-child{border-radius:0 8px 8px 0}
+.seg button[aria-pressed="true"]{background:var(--accent);color:var(--accent-fg);border-color:var(--accent);position:relative;z-index:1}
+.btn:focus-visible,.seg button:focus-visible,input:focus-visible{outline:3px solid var(--accent);outline-offset:2px}
+.switch{display:inline-flex;align-items:center;gap:8px;font-size:14px;min-height:36px;cursor:pointer}
+.switch input{width:18px;height:18px;accent-color:var(--accent)}
+.slide{display:flex;align-items:center;gap:12px;margin:6px 0}
+.slide input{flex:1;min-width:0;accent-color:var(--accent)}
+.slide input:disabled{opacity:.45}
+.slide output{font-family:var(--font-mono);font-weight:600;min-width:4ch;text-align:right;font-variant-numeric:tabular-nums}
+.note{font-size:13px;color:var(--muted);margin-top:6px}
+.oled{background:var(--oled-bg);color:var(--oled-fg);font-family:var(--font-mono);font-size:15px;line-height:1.55;padding:12px 14px;border-radius:8px;border:3px solid var(--line-strong);white-space:pre;overflow:hidden;font-variant-numeric:tabular-nums}
+.oled .hl{color:var(--oled-bg);background:var(--oled-fg)}
+.leds{display:flex;flex-wrap:wrap;gap:16px;margin:14px 0 4px}
+.led{display:flex;align-items:center;gap:8px;font-size:13px;font-weight:500}
+.led i{width:22px;height:22px;border-radius:50%;background:var(--surface-2);border:2px solid var(--line-strong);display:block}
+.led.on.g i{background:var(--good);border-color:var(--good);box-shadow:0 0 12px var(--good)}
+.led.on.r i{background:var(--bad);border-color:var(--bad);box-shadow:0 0 12px var(--bad)}
+.led.on.y i{background:var(--warn);border-color:var(--warn);box-shadow:0 0 12px var(--warn)}
+.pills{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
+.pill{font-family:var(--font-mono);font-size:13px;padding:4px 10px;border-radius:6px;border:1px solid var(--line);background:var(--surface-2)}
+.pill.on{border-color:var(--bad);color:var(--bad);font-weight:600}
+.pill.alarm{animation:pulse .6s ease-in-out infinite alternate}
+@keyframes pulse{from{opacity:1}to{opacity:.45}}
+@media (prefers-reduced-motion: reduce){.pill.alarm{animation:none}}
+.formula{font-family:var(--font-mono);font-size:13px;color:var(--muted);margin-bottom:10px}
+.queue{list-style:none;display:flex;flex-direction:column;gap:8px;min-height:64px}
+.queue li{display:grid;grid-template-columns:1fr auto;gap:4px 12px;font-size:14px}
+.queue .qt{font-family:var(--font-mono);font-variant-numeric:tabular-nums}
+.queue .bar{grid-column:1/-1;height:6px;background:var(--surface-2);border-radius:3px;overflow:hidden}
+.queue .bar i{display:block;height:100%;background:var(--accent)}
+.empty{color:var(--muted);font-size:14px}
+.stats{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+.stat{border:1px solid var(--line);border-radius:8px;padding:8px 10px}
+.stat b{display:block;font-family:var(--font-mono);font-size:24px;line-height:1.2;font-variant-numeric:tabular-nums}
+.stat span{font-size:12px;color:var(--muted)}
+.log{list-style:none;display:flex;flex-direction:column;gap:4px;font-family:var(--font-mono);font-size:12.5px;line-height:1.45}
+.log li{color:var(--muted);overflow-wrap:anywhere}
+.log li:first-child{color:var(--fg)}
+.scene .cone{fill:none;stroke:var(--muted);stroke-width:2;stroke-dasharray:4 4}
+.scene .box{fill:var(--surface-2);stroke:var(--line-strong);stroke-width:2}
+.scene .mk{fill:var(--accent)}
+.scene .mk-t{font:700 14px var(--font-body);fill:var(--accent-fg);text-anchor:middle;dominant-baseline:central}
+.scene .t2{font:500 18px var(--font-body);fill:var(--fg)}
+.tabs{align-self:flex-start}
+.place{list-style:none;display:flex;flex-direction:column;gap:10px;font-size:14px}
+.place li{display:flex;gap:10px;align-items:flex-start}
+.place b{flex:none;width:22px;height:22px;border-radius:50%;background:var(--accent);color:var(--accent-fg);display:inline-flex;align-items:center;justify-content:center;font-size:13px}
+.place span{min-width:0}
+.linkbtn{display:inline-block;margin-top:12px;font:500 14px var(--font-body);color:var(--accent);background:none;border:0;padding:6px 0;cursor:pointer;text-decoration:underline;text-underline-offset:3px}
+.guide{display:flex;flex-direction:column;gap:16px;max-width:920px}
+.prose p{max-width:72ch;margin-bottom:10px}
+.prose p:last-child{margin-bottom:0}
+.steps{display:flex;flex-direction:column;gap:8px;padding-left:22px;max-width:72ch}
+.scroll{overflow-x:auto}
+.tbl{width:100%;min-width:520px;border-collapse:collapse;font-size:14px}
+.tbl th,.tbl td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+.tbl th{color:var(--muted);font-size:12px;letter-spacing:.08em;text-transform:uppercase}
+.tbl td:first-child{font-weight:500}
+.mono{font-family:var(--font-mono);font-size:13px}
+.comp{border:1px solid var(--line);border-radius:8px;background:var(--surface)}
+.comp+.comp{margin-top:8px}
+.comp summary{display:flex;justify-content:space-between;gap:12px;padding:12px 14px;cursor:pointer;font-weight:700;list-style:none}
+.comp summary::-webkit-details-marker{display:none}
+.comp summary .rs{font-family:var(--font-mono);font-weight:400;color:var(--muted);white-space:nowrap}
+.comp[open] summary{border-bottom:1px solid var(--line)}
+.comp dl{display:grid;grid-template-columns:minmax(0,110px) minmax(0,1fr);gap:8px 14px;padding:12px 14px;font-size:14px}
+.comp dt{color:var(--muted);font-weight:700}
+.comp dd{min-width:0;overflow-wrap:anywhere}
+@media (max-width:520px){.comp dl{grid-template-columns:minmax(0,1fr)}.comp dt{margin-top:6px}}
+</style>
+
+<div class="wrap">
+  <header class="top">
+    <div>
+      <p class="eyebrow">Case C07 · Round 2 demo</p>
+      <h1>Cap inspection simulator</h1>
+      <p class="specs">Belt 0.3 m/s · sensor to gate 0.45 m · bottle every 1.5 s</p>
+    </div>
+    <div class="chip" id="status" role="status">Running</div>
+  </header>
+
+  <div class="seg tabs" id="tabs" role="group" aria-label="Pages">
+    <button type="button" data-view="simulator" aria-pressed="true">Simulator</button>
+    <button type="button" data-view="guide" aria-pressed="false">Project guide</button>
+  </div>
+
+  <div id="view-sim">
+  <div class="grid">
+    <div class="col">
+      <section class="card" aria-label="Conveyor line">
+        <h2>Conveyor line</h2>
+        <svg class="scene" viewBox="0 0 900 310" role="img" aria-label="Side view of the belt: bottles move left to right past the IR sensor, then reach the reject gate 0.45 m later.">
+          <line class="guide" x1="250" y1="30" x2="250" y2="190"/>
+          <line class="guide" x1="565" y1="30" x2="565" y2="190"/>
+          <line class="dim" x1="256" y1="28" x2="559" y2="28"/>
+          <path class="dim" d="M264 22 L254 28 L264 34 M551 22 L561 28 L551 34"/>
+          <text class="t" x="407" y="20" text-anchor="middle">0.45 m = 1.5 s</text>
+          <rect class="belt" x="0" y="190" width="900" height="22"/>
+          <g id="stripes"></g>
+          <rect class="leg" x="60" y="212" width="14" height="20"/>
+          <rect class="leg" x="826" y="212" width="14" height="20"/>
+          <g id="bottles"></g>
+          <rect class="head" x="232" y="34" width="36" height="26" rx="4"/>
+          <line id="beam" class="beam" x1="250" y1="62" x2="250" y2="84"/>
+          <rect class="head" x="284" y="34" width="40" height="26" rx="4"/>
+          <path class="cone" d="M304 62 L291 86 H317 Z"/>
+          <rect class="head" x="541" y="34" width="48" height="22" rx="4"/>
+          <rect id="arm" class="arm" x="557" y="56" width="16" height="14" rx="2"/>
+          <text class="t" x="250" y="240" text-anchor="middle">IR sensor</text>
+          <text class="t" x="565" y="240" text-anchor="middle">Reject gate</text>
+          <path class="bin" d="M525 252 V300 H605 V252"/>
+          <text id="binCount" class="t-fg" x="565" y="286" text-anchor="middle">0</text>
+          <rect class="box" x="40" y="244" width="180" height="40" rx="6"/>
+          <text class="t2" x="76" y="265">Operator panel</text>
+          <rect class="box" x="670" y="244" width="210" height="40" rx="6"/>
+          <text class="t2" x="710" y="265">Control box</text>
+          <circle class="mk" cx="250" cy="47" r="10"/><text class="mk-t" x="250" y="47">1</text>
+          <circle class="mk" cx="304" cy="47" r="10"/><text class="mk-t" x="304" y="47">2</text>
+          <circle class="mk" cx="565" cy="45" r="10"/><text class="mk-t" x="565" y="45">3</text>
+          <circle class="mk" cx="634" cy="268" r="10"/><text class="mk-t" x="634" y="268">4</text>
+          <circle class="mk" cx="692" cy="264" r="10"/><text class="mk-t" x="692" y="264">5</text>
+          <circle class="mk" cx="58" cy="264" r="10"/><text class="mk-t" x="58" y="264">6</text>
+        </svg>
+      </section>
+
+      <section class="card" aria-label="Component placement">
+        <h2>Where each part sits</h2>
+        <ol class="place">
+          <li><b>1</b><span>IR sensor: on a bracket over the belt, 1 to 2 cm above the bottle neck, facing down.</span></li>
+          <li><b>2</b><span>HC-SR04: on the same bracket, about 5 cm above the cap, checks cap height.</span></li>
+          <li><b>3</b><span>Reject gate: 0.45 m downstream of the sensor, pushes bad bottles sideways.</span></li>
+          <li><b>4</b><span>Reject bin: on the gate side, catches rejected bottles.</span></li>
+          <li><b>5</b><span>Control box: beside the belt, holds the ESP32, optocoupler, relay and power supply.</span></li>
+          <li><b>6</b><span>Operator panel: OLED, LEDs, buzzer and 3 buttons at eye level near the sensor.</span></li>
+        </ol>
+        <button type="button" class="linkbtn" data-goto="guide">Open the full project guide</button>
+      </section>
+
+      <section class="card" aria-label="Live sensor reading">
+        <h2>IR sensor reading (12-bit ADC)</h2>
+        <div class="readout">
+          <div class="adc"><span id="adcVal">105</span><small>counts</small></div>
+          <span class="verdict v-none" id="adcVerdict">No bottle</span>
+        </div>
+        <div class="gwrap">
+          <div class="needle" id="needle"></div>
+          <div class="gauge" aria-hidden="true"><i class="g-none"></i><i class="g-missing"></i><i class="g-loose"></i><i class="g-good"></i></div>
+          <div class="ticks" aria-hidden="true"><span style="left:5.86%">240</span><span style="left:23.2%">950</span><span style="left:51.28%">2100</span><span style="left:100%">4095</span></div>
+        </div>
+        <div class="legend">
+          <span><b style="background:var(--none)"></b>No bottle &lt; 240</span>
+          <span><b style="background:var(--bad)"></b>Missing 240–950</span>
+          <span><b style="background:var(--warn)"></b>Loose 950–2100</span>
+          <span><b style="background:var(--good)"></b>Good &gt; 2100</span>
+        </div>
+        <p class="lastpass" id="lastPass">Last pass: waiting for a bottle.</p>
+      </section>
+
+      <section class="card" aria-label="Controls">
+        <h2>Controls</h2>
+        <div class="row">
+          <button class="btn primary" id="run" type="button">Pause</button>
+          <div class="seg" id="speedSeg" role="group" aria-label="Simulation speed">
+            <button type="button" data-speed="0.5" aria-pressed="false">0.5×</button>
+            <button type="button" data-speed="1" aria-pressed="true">1×</button>
+            <button type="button" data-speed="2" aria-pressed="false">2×</button>
+            <button type="button" data-speed="4" aria-pressed="false">4×</button>
+          </div>
+          <label class="switch"><input type="checkbox" id="auto" checked><span>Auto bottles</span></label>
+        </div>
+
+        <h3 class="label">Send a bottle</h3>
+        <div class="btnrow">
+          <button class="btn" type="button" data-kind="good">Good cap</button>
+          <button class="btn" type="button" data-kind="loose">Loose cap</button>
+          <button class="btn" type="button" data-kind="missing">Missing cap</button>
+          <button class="btn" type="button" data-kind="none">Empty slot</button>
+        </div>
+        <div class="btnrow">
+          <button class="btn" type="button" id="sample">Next sample bottle</button>
+          <button class="btn" type="button" id="selftest">Run all 12</button>
+        </div>
+        <p class="note" id="stStatus">The 12 sample bottles use the readings from the case sheet.</p>
+
+        <h3 class="label">Sensor condition</h3>
+        <div class="seg" id="modeSeg" role="group" aria-label="Sensor condition">
+          <button type="button" data-mode="normal" aria-pressed="true">Normal</button>
+          <button type="button" data-mode="stuck" aria-pressed="false">Stuck</button>
+          <button type="button" data-mode="open" aria-pressed="false">Open (0)</button>
+          <button type="button" data-mode="short" aria-pressed="false">Short (4095)</button>
+        </div>
+
+        <h3 class="label">Hand over the sensor</h3>
+        <label class="switch"><input type="checkbox" id="manual"><span>Use the slider as the sensor input</span></label>
+        <div class="slide"><input type="range" id="adc" min="0" max="4095" value="105" disabled aria-label="Simulated ADC reading"><output id="adcOut" for="adc">105</output></div>
+        <label class="switch"><input type="checkbox" id="noise" checked><span>Add ±40 noise</span></label>
+
+        <div class="btnrow" style="margin-top:12px">
+          <button class="btn" type="button" id="reset">Reset</button>
+          <button class="btn" type="button" id="sound" aria-pressed="false">Sound off</button>
+        </div>
+        <p class="note">Keys 1, 2, 3 match push buttons 1 to 3: next sample, stuck sensor, reset.</p>
+      </section>
+    </div>
+
+    <div class="col">
+      <section class="card" aria-label="Virtual hardware">
+        <h2>ESP32 outputs</h2>
+        <div class="oled" id="oled" aria-label="OLED display"></div>
+        <div class="leds">
+          <div class="led g" id="ledG"><i></i>Pass</div>
+          <div class="led r" id="ledR"><i></i>Reject</div>
+          <div class="led y" id="ledY"><i></i>Fault</div>
+        </div>
+        <div class="pills">
+          <span class="pill" id="relay">Relay OFF</span>
+          <span class="pill" id="buzzer">Buzzer silent</span>
+        </div>
+      </section>
+
+      <section class="card" aria-label="Reject queue">
+        <h2>Reject queue</h2>
+        <p class="formula">delay = 0.45 m ÷ 0.3 m/s = 1.5 s</p>
+        <ul class="queue" id="queue"></ul>
+      </section>
+
+      <section class="card" aria-label="Counters">
+        <h2>Counters</h2>
+        <div class="stats">
+          <div class="stat"><b id="cIns">0</b><span>Inspected</span></div>
+          <div class="stat"><b id="cGood">0</b><span>Good</span></div>
+          <div class="stat"><b id="cRej">0</b><span>Rejected</span></div>
+          <div class="stat"><b id="cLoose">0</b><span>Loose</span></div>
+          <div class="stat"><b id="cMiss">0</b><span>Missing</span></div>
+          <div class="stat"><b id="cFault">0</b><span>Faults</span></div>
+        </div>
+      </section>
+
+      <section class="card" aria-label="Event log">
+        <h2>Event log</h2>
+        <ul class="log" id="log"></ul>
+      </section>
+    </div>
+  </div>
+  </div>
+
+  <div id="view-guide" class="guide" hidden>
+    <section class="card prose">
+      <h2>The project in brief</h2>
+      <p>A PLC runs the filler, capper and conveyor, but nothing checks the caps. Some bottles leave the capper with no cap or a loose, tilted one, which caused 23 customer complaints last month.</p>
+      <p>This design adds one inspection point right after the capper. An IR reflective sensor reads each bottle neck, an ESP32 sorts the bottle as Good, Loose or Missing, and a gate 0.45 m downstream removes the bad ones.</p>
+      <p>The sample data splits into four groups that never overlap. The closest two are 275 counts apart, about seven times the ±40 count noise, so fixed thresholds are enough. The parts cost Rs. 1,465 against the Rs. 3,000 cap.</p>
+      <button type="button" class="linkbtn" data-goto="simulator">Back to the simulator</button>
+    </section>
+
+    <section class="card">
+      <h2>How it works, step by step</h2>
+      <ol class="steps">
+        <li>A bottle leaves the capper and rides the belt (0.3 m/s, one bottle every 1.5 s) to the inspection station.</li>
+        <li>For the 0.4 s it passes under the IR sensor, the ESP32 reads the ADC about 100 times a second.</li>
+        <li>It takes the median of those readings, which removes the ±40 count noise.</li>
+        <li>The median falls in a band: Good above 2100, Loose 950 to 2100, Missing 240 to 950. Below 240 means no bottle.</li>
+        <li>A Good bottle goes on. A Loose or Missing bottle joins the reject queue with a fire time of mid-pass plus 1.5 s.</li>
+        <li>When the fire time arrives, the ESP32 switches the optocoupler and relay for about 0.3 s and the gate pushes that bottle into the bin.</li>
+        <li>The OLED, LEDs and counters update, so maintenance can see which defect is most common.</li>
+      </ol>
+      <p class="note">The simulator models the IR path, the queue, the gate and the faults. The ultrasonic cross-check is part of the hardware design and is not simulated.</p>
+    </section>
+
+    <section class="card">
+      <h2>Component placement</h2>
+      <div class="scroll"><table class="tbl">
+        <thead><tr><th>Component</th><th>Where it sits</th><th>Mounting notes</th></tr></thead>
+        <tbody>
+          <tr><td>IR reflective sensor</td><td>Inspection station, over the belt</td><td>On a bracket, head 1 to 2 cm above the bottle neck, facing down, with a small shroud against stray light</td></tr>
+          <tr><td>Ultrasonic HC-SR04</td><td>Same bracket, beside the IR sensor</td><td>About 5 cm above cap height, pointing down, so both sensors see the same bottle</td></tr>
+          <tr><td>Reject gate</td><td>0.45 m downstream of the sensor, beside the belt</td><td>Relay-driven pusher on one side that pushes bad bottles sideways</td></tr>
+          <tr><td>Reject bin</td><td>Opposite the gate</td><td>Catches rejected bottles</td></tr>
+          <tr><td>Control box</td><td>Beside the belt, away from moving parts</td><td>Holds the ESP32, optocoupler, relay, breadboard and supply. Keep sensor wires short</td></tr>
+          <tr><td>Operator panel</td><td>Front of the control box, eye level</td><td>OLED, 3 LEDs, buzzer and 3 buttons, visible from the station</td></tr>
+          <tr><td>Power adapter</td><td>Outside the box, plugged in</td><td>5 V to the ESP32 and relay with a common ground</td></tr>
+        </tbody>
+      </table></div>
+      <p class="note">The gate pusher itself is not on the price sheet. In the demo the relay click and the red LED stand in for it.</p>
+    </section>
+
+    <section class="card">
+      <h2>Proposed pin map</h2>
+      <div class="scroll"><table class="tbl">
+        <thead><tr><th>Signal</th><th>ESP32 pin</th><th>Note</th></tr></thead>
+        <tbody>
+          <tr><td>IR sensor analog out</td><td class="mono">GPIO34</td><td>ADC1, input only, safe with Wi-Fi</td></tr>
+          <tr><td>HC-SR04 trigger / echo</td><td class="mono">GPIO4 / GPIO18</td><td>Echo is 5 V, so it needs a divider (see the HC-SR04 card)</td></tr>
+          <tr><td>Optocoupler input</td><td class="mono">GPIO26</td><td>Output side drives the relay input</td></tr>
+          <tr><td>OLED SDA / SCL</td><td class="mono">GPIO21 / GPIO22</td><td>I2C, 3.3 V</td></tr>
+          <tr><td>Green / red / yellow LED</td><td class="mono">GPIO25 / 27 / 14</td><td>Pass, reject, fault</td></tr>
+          <tr><td>Buzzer</td><td class="mono">GPIO33</td><td>Fault alarm</td></tr>
+          <tr><td>Buttons 1 / 2 / 3</td><td class="mono">GPIO16 / 17 / 19</td><td>To GND, use INPUT_PULLUP</td></tr>
+        </tbody>
+      </table></div>
+      <p class="note">This is a suggested layout. Change it to suit your wiring.</p>
+    </section>
+
+    <section class="card">
+      <h2>Components in detail</h2>
+      <details class="comp" open>
+        <summary><span>ESP32 DevKit</span><span class="rs">Rs. 600</span></summary>
+        <dl>
+          <dt>Role</dt><dd>The controller. Reads the sensors, classifies bottles, runs the reject queue and drives every output.</dd>
+          <dt>Placement</dt><dd>Inside the control box beside the belt.</dd>
+          <dt>Key specs</dt><dd>Dual-core 240 MHz, 3.3 V logic, 12-bit ADC (0 to 4095). Use ADC1 pins (GPIO32 to 39), because ADC2 clashes with Wi-Fi. Wi-Fi is not needed for the demo.</dd>
+        </dl>
+      </details>
+      <details class="comp">
+        <summary><span>IR reflective sensor</span><span class="rs">Rs. 60</span></summary>
+        <dl>
+          <dt>Role</dt><dd>Measures how much IR light bounces off the cap. A good cap reflects a lot, a loose one less, a missing one little, and an empty slot almost none.</dd>
+          <dt>Placement</dt><dd>On the bracket over the belt, 1 to 2 cm above the neck, facing down, with a small shroud.</dd>
+          <dt>Key specs</dt><dd>3.3 to 5 V, range about 2 to 30 cm depending on the module. A potentiometer sets sensitivity.</dd>
+          <dt>Check first</dt><dd>You need the analog output (AO). Many obstacle modules only give on/off, which cannot give the counts used here. Power it from 3.3 V so the analog output stays within the ESP32 limit.</dd>
+        </dl>
+      </details>
+      <details class="comp">
+        <summary><span>Ultrasonic HC-SR04</span><span class="rs">Rs. 100</span></summary>
+        <dl>
+          <dt>Role</dt><dd>Cross-checks cap height and helps catch a faulty IR sensor.</dd>
+          <dt>Placement</dt><dd>On the same bracket, beside the IR sensor, about 5 cm above the cap, pointing down.</dd>
+          <dt>Key specs</dt><dd>5 V, about 15 mA, range 2 to 400 cm, accuracy about 3 mm, 40 kHz, beam about 15°, 10 µs trigger pulse.</dd>
+          <dt>Check first</dt><dd>The echo pin outputs 5 V. A resistor divider fixes that, but resistors are not on the price sheet. Ask the organisers, or use a 3.3 V-tolerant HC-SR04 variant.</dd>
+        </dl>
+      </details>
+      <details class="comp">
+        <summary><span>Optocoupler module</span><span class="rs">Rs. 60</span></summary>
+        <dl>
+          <dt>Role</dt><dd>Passes the signal by light so the ESP32 is electrically isolated from the relay side.</dd>
+          <dt>Placement</dt><dd>In the control box, between the ESP32 and the relay.</dd>
+          <dt>Key specs</dt><dd>The input LED side works from a 3.3 V logic signal. The output is a transistor that drives the relay input.</dd>
+        </dl>
+      </details>
+      <details class="comp">
+        <summary><span>1-channel relay module</span><span class="rs">Rs. 80</span></summary>
+        <dl>
+          <dt>Role</dt><dd>The switch behind the reject gate. It closes for about 0.3 s when a bad bottle reaches the gate.</dd>
+          <dt>Placement</dt><dd>In the control box, close to the gate side.</dd>
+          <dt>Key specs</dt><dd>5 V coil, contacts commonly rated 10 A at 250 V AC. Many modules are active-low, so a LOW input turns it on.</dd>
+        </dl>
+      </details>
+      <details class="comp">
+        <summary><span>0.96 inch OLED display</span><span class="rs">Rs. 250</span></summary>
+        <dl>
+          <dt>Role</dt><dd>Shows the current verdict, ADC reading, queue length and defect counts.</dd>
+          <dt>Placement</dt><dd>Operator panel at eye level.</dd>
+          <dt>Key specs</dt><dd>SSD1306, 128 by 64 pixels, I2C (address usually 0x3C), 3.3 V.</dd>
+        </dl>
+      </details>
+      <details class="comp">
+        <summary><span>Active buzzer</span><span class="rs">Rs. 20</span></summary>
+        <dl>
+          <dt>Role</dt><dd>Sounds the alarm when the sensor fails.</dd>
+          <dt>Placement</dt><dd>On the operator panel.</dd>
+          <dt>Key specs</dt><dd>3 to 5 V with a built-in oscillator, so a HIGH signal gives a fixed tone. Check the current it draws against the pin limit.</dd>
+        </dl>
+      </details>
+      <details class="comp">
+        <summary><span>LEDs (3)</span><span class="rs">Rs. 15</span></summary>
+        <dl>
+          <dt>Role</dt><dd>Green shows a pass, red shows a reject, yellow shows a sensor fault.</dd>
+          <dt>Placement</dt><dd>On the operator panel.</dd>
+          <dt>Key specs</dt><dd>About 2 V and 20 mA each, with a series resistor of about 220 Ω. Resistors are not on the price sheet, so ask the organisers or use LED modules that include one.</dd>
+        </dl>
+      </details>
+      <details class="comp">
+        <summary><span>Push buttons (3)</span><span class="rs">Rs. 30</span></summary>
+        <dl>
+          <dt>Role</dt><dd>Demo inputs: button 1 plays the next sample bottle, button 2 freezes the sensor reading, button 3 resets.</dd>
+          <dt>Placement</dt><dd>On the operator panel.</dd>
+          <dt>Key specs</dt><dd>Momentary switches wired to ground, read with the ESP32 internal pull-up, so no resistor is needed.</dd>
+        </dl>
+      </details>
+      <details class="comp">
+        <summary><span>Breadboard and jumper set</span><span class="rs">Rs. 100</span></summary>
+        <dl>
+          <dt>Role</dt><dd>Solderless wiring for the prototype.</dd>
+          <dt>Placement</dt><dd>Inside the control box.</dd>
+          <dt>Tip</dt><dd>Keep the 5 V relay supply and the 3.3 V logic on separate rails, with a shared ground.</dd>
+        </dl>
+      </details>
+      <details class="comp">
+        <summary><span>Power adapter / USB supply</span><span class="rs">Rs. 150</span></summary>
+        <dl>
+          <dt>Role</dt><dd>Powers the ESP32, relay and sensors.</dd>
+          <dt>Placement</dt><dd>Plugged in outside the control box.</dd>
+          <dt>Key specs</dt><dd>5 V, ideally 1 to 2 A. The relay coil and the ESP32 are the main loads.</dd>
+        </dl>
+      </details>
+      <p class="note">Total Rs. 1,465 against the Rs. 3,000 cap, so Rs. 1,535 under.</p>
+    </section>
+
+    <section class="card">
+      <h2>Thresholds and timing</h2>
+      <div class="scroll"><table class="tbl">
+        <thead><tr><th>Verdict</th><th>ADC band</th><th>Sample readings</th><th>Closest sample to a boundary</th></tr></thead>
+        <tbody>
+          <tr><td>Good cap</td><td class="mono">above 2100</td><td class="mono">2540 to 2675</td><td>440 counts</td></tr>
+          <tr><td>Loose cap</td><td class="mono">950 to 2100</td><td class="mono">1390 to 1620</td><td>440 counts</td></tr>
+          <tr><td>Missing cap</td><td class="mono">240 to 950</td><td class="mono">380 to 510</td><td>140 counts</td></tr>
+          <tr><td>No bottle</td><td class="mono">below 240</td><td class="mono">105</td><td>135 counts</td></tr>
+        </tbody>
+      </table></div>
+      <p class="note">Each boundary sits halfway between the nearest samples of neighbouring groups. The closest sample is still more than 3 times the ±40 count noise away.</p>
+      <div class="scroll"><table class="tbl">
+        <thead><tr><th>Quantity</th><th>Calculation</th><th>Result</th></tr></thead>
+        <tbody>
+          <tr><td>Pass time under the sensor</td><td class="mono">0.12 m ÷ 0.3 m/s</td><td class="mono">0.4 s</td></tr>
+          <tr><td>Bottle spacing</td><td class="mono">0.45 m ÷ 0.3 m/s</td><td class="mono">1.5 s</td></tr>
+          <tr><td>Reject delay</td><td class="mono">0.45 m ÷ 0.3 m/s</td><td class="mono">1.5 s</td></tr>
+        </tbody>
+      </table></div>
+      <p class="note">The bottle width of 0.12 m follows from the 0.4 s pass time at 0.3 m/s. Each bad bottle gets its own fire time, so two in a row are both rejected.</p>
+    </section>
+
+    <section class="card">
+      <h2>When the sensor fails</h2>
+      <div class="scroll"><table class="tbl">
+        <thead><tr><th>Fault</th><th>How it is detected</th><th>Response</th></tr></thead>
+        <tbody>
+          <tr><td>Stuck reading</td><td>30 samples in a row with the same value</td><td>Alarm, yellow LED, reject every bottle</td></tr>
+          <tr><td>Open circuit</td><td>Reading at or near 0 for 10 samples</td><td>Same</td></tr>
+          <tr><td>Short circuit</td><td>Reading at or near 4095 for 10 samples</td><td>Same</td></tr>
+          <tr><td>Recovery</td><td>30 normal, changing readings</td><td>Alarm clears, inspection resumes</td></tr>
+        </tbody>
+      </table></div>
+      <p class="note">While the sensor is faulty, bottle presence comes from the backup (the ultrasonic sensor or belt timing), and every bottle is rejected. Losing good bottles is safer than shipping bad ones.</p>
+    </section>
+
+    <section class="card">
+      <h2>Round 2 demo mapping</h2>
+      <div class="scroll"><table class="tbl">
+        <thead><tr><th>Hardware demo</th><th>Simulator control</th></tr></thead>
+        <tbody>
+          <tr><td>Hand above the IR sensor</td><td>Slider with "Use the slider as the sensor input"</td></tr>
+          <tr><td>Button 1: next sample bottle</td><td>Next sample bottle, or key 1</td></tr>
+          <tr><td>Button 2: freeze the reading</td><td>Sensor condition Stuck, or key 2</td></tr>
+          <tr><td>Button 3: reset</td><td>Reset, or key 3</td></tr>
+          <tr><td>Relay click and red LED</td><td>Gate arm, relay and red LED indicators</td></tr>
+        </tbody>
+      </table></div>
+      <button type="button" class="linkbtn" data-goto="simulator">Back to the simulator</button>
+    </section>
+  </div>
+</div>
+
+<script>
+(function(){
+  var $=function(s){return document.querySelector(s)};
+  var SC=700, X0=40, SENSOR_M=0.30, GATE_M=0.75, SPEED=0.3, HALF_W=0.06, DELAY=1.5, STEP=0.01, BELT_END=1.25, BELT_Y=190;
+  var KINDS={good:{lo:2540,hi:2675,name:'Good'},loose:{lo:1390,hi:1620,name:'Loose'},missing:{lo:380,hi:510,name:'Missing'},none:{lo:105,hi:105,name:'No bottle'}};
+  var SAMPLES=[[2610,'good'],[380,'missing'],[1480,'loose'],[2540,'good'],[460,'missing'],[2675,'good'],[1620,'loose'],[510,'missing'],[2590,'good'],[1390,'loose'],[420,'missing'],[105,'none']];
+  var S={t:0,running:true,speed:1,auto:true,autoT:1.5,script:['good','loose','good','missing','good','good','loose','good'],pending:[],bottles:[],nextId:0,queue:[],qid:0,win:[],samples:[],inB:false,startT:0,curB:null,cover:null,reading:105,prevV:105,mode:'normal',stuckV:105,manual:false,slider:105,noise:true,faultActive:false,faultReason:'',okCount:0,inspected:0,good:0,loose:0,missing:0,rejected:0,faults:0,lastMed:null,lastVerdict:'',ledG:0,ledR:0,relayUntil:-1,armT:-10,log:[],sampleIdx:0,sound:false};
+  var ST={active:false,done:0,ok:0};
+
+  function classify(v){return v>2100?'Good':(v>=950?'Loose':(v>=240?'Missing':'No bottle'))}
+  function vkey(v){return v>2100?'good':(v>=950?'loose':(v>=240?'missing':'none'))}
+  function randIn(k){var K=KINDS[k];return Math.round(K.lo+Math.random()*(K.hi-K.lo))}
+  function log(msg){S.log.unshift({t:S.t,msg:msg});if(S.log.length>40)S.log.pop()}
+  function setText(el,v){v=String(v);if(el.textContent!==v)el.textContent=v}
+
+  function nextAuto(){
+    var k=S.script.length?S.script.shift():null;
+    if(!k){var r=Math.random();k=r<0.66?'good':(r<0.80?'loose':(r<0.94?'missing':'none'))}
+    return {kind:k,adc:randIn(k)};
+  }
+  function entryClear(){return S.bottles.every(function(b){return b.state!=='belt'||b.m>=0.09})}
+  function spawn(p){
+    S.bottles.push({id:++S.nextId,m:-0.06,adc:p.adc,kind:p.kind,state:'belt',ej:0,expect:p.expect||null,test:!!p.test,verdict:null,fs:false});
+  }
+  function enqueue(item){item.id=++S.qid;S.queue.push(item);S.queue.sort(function(a,b){return a.fireAt-b.fireAt})}
+  function recordTest(b,verdict){
+    if(b.test&&ST.active){ST.done++;if(verdict===b.expect)ST.ok++}
+  }
+  function raise(reason){
+    S.faultActive=true;S.faultReason=reason;S.faults++;S.okCount=0;S.inB=false;S.samples=[];
+    log('Sensor fault: '+reason+'. Alarm on, rejecting every bottle.');
+  }
+  function crossed(b){
+    if(S.faultActive&&b.kind!=='none'&&!b.fs){
+      b.fs=true;S.inspected++;
+      enqueue({fireAt:S.t+DELAY,verdict:'Fail-safe',bottleId:b.id});
+      log('Bottle #'+b.id+' detected by backup, queued for reject (fail-safe).');
+    }
+    if(b.kind==='none'&&b.test){recordTest(b,'No bottle')}
+  }
+  function finalize(){
+    S.inB=false;
+    var s=S.samples.slice().sort(function(a,b){return a-b});S.samples=[];
+    if(s.length<5)return;
+    var med=s[s.length>>1],verdict=classify(med),mid=(S.startT+S.t)/2,b=S.curB;
+    S.lastMed=med;S.lastVerdict=verdict;S.inspected++;
+    if(b)b.verdict=verdict;
+    var tag=b?'Bottle #'+b.id:'Manual input';
+    var extra='';
+    if(verdict==='Good'){S.good++;S.ledG=S.t+0.6;extra=' · pass'}
+    else{
+      if(verdict==='Loose')S.loose++;else S.missing++;
+      enqueue({fireAt:mid+DELAY,verdict:verdict,bottleId:b?b.id:null});
+      extra=' · reject in 1.5 s';
+    }
+    if(b&&b.expect){extra+=verdict===b.expect?' · matches manual verdict':' · MISMATCH, expected '+b.expect}
+    if(b)recordTest(b,verdict);
+    log(tag+': median '+med+' → '+verdict+extra);
+  }
+  function fire(q){
+    S.relayUntil=S.t+0.3;S.armT=S.t;S.ledR=S.t+0.6;S.rejected++;
+    var b=q.bottleId!=null?S.bottles.filter(function(x){return x.id===q.bottleId&&x.state==='belt'})[0]:null;
+    if(b){b.state='eject';b.ej=0}
+    log('Gate fired'+(b?' on bottle #'+b.id:'')+' ('+q.verdict+').');
+  }
+  function noise(){return (Math.random()*2-1)*40}
+
+  function step(){
+    S.t+=STEP;
+    if(S.auto&&!S.manual){
+      S.autoT+=STEP;
+      if(S.autoT>=1.5&&S.pending.length<2){S.autoT-=1.5;S.pending.push(nextAuto())}
+    }
+    if(S.pending.length&&entryClear())spawn(S.pending.shift());
+    for(var i=0;i<S.bottles.length;i++){
+      var b=S.bottles[i];
+      if(b.state==='belt'){
+        var pm=b.m;b.m+=SPEED*STEP;
+        if(pm<SENSOR_M&&b.m>=SENSOR_M)crossed(b);
+        if(b.m>BELT_END)b.state='gone';
+      }else if(b.state==='eject'){b.ej+=STEP/0.5;if(b.ej>=1)b.state='gone'}
+    }
+    S.bottles=S.bottles.filter(function(b){return b.state!=='gone'});
+
+    var v;
+    if(S.manual){S.cover=null;v=S.slider+(S.noise?noise():0)}
+    else{
+      var c=null;
+      for(var j=0;j<S.bottles.length;j++){var x=S.bottles[j];if(x.state==='belt'&&x.kind!=='none'&&Math.abs(x.m-SENSOR_M)<=HALF_W){c=x;break}}
+      S.cover=c;v=(c?c.adc:105)+noise();
+    }
+    if(S.mode==='stuck')v=S.stuckV;else if(S.mode==='open')v=0;else if(S.mode==='short')v=4095;
+    v=Math.round(Math.max(0,Math.min(4095,v)));
+    S.reading=v;
+    S.win.push(v);if(S.win.length>30)S.win.shift();
+    var w=S.win;
+    if(!S.faultActive){
+      if(w.length>=10){
+        var l=w.slice(-10);
+        if(l.every(function(a){return a<=5}))raise('open circuit (reading 0)');
+        else if(l.every(function(a){return a>=4090}))raise('short circuit (reading 4095)');
+      }
+      if(!S.faultActive&&w.length>=30&&(S.mode==='stuck'||!S.manual||S.noise)&&w.every(function(a){return a===w[0]}))raise('reading stuck at '+w[0]);
+    }else{
+      var valid=v>20&&v<4080&&(v!==S.prevV||(S.manual&&!S.noise));
+      if(S.mode==='normal'&&valid)S.okCount++;else S.okCount=0;
+      if(S.okCount>=30){S.faultActive=false;S.win=[];S.inB=false;log('Sensor recovered. Fault cleared, normal inspection resumed.')}
+    }
+    S.prevV=v;
+    if(!S.faultActive){
+      if(!S.inB){if(v>240){S.inB=true;S.samples=[v];S.startT=S.t;S.curB=S.cover||null}}
+      else{if(v>240)S.samples.push(v);else finalize()}
+    }
+    while(S.queue.length&&S.queue[0].fireAt<=S.t)fire(S.queue.shift());
+  }
+
+  var stripes=$('#stripes'),s='';
+  for(var i=0;i<24;i++)s+='<line class="belt-line" x1="'+(i*40-40)+'" y1="196" x2="'+(i*40-40)+'" y2="206"/>';
+  stripes.innerHTML=s;
+
+  function bottleSVG(b){
+    var x=X0+SC*b.m;
+    if(b.kind==='none')return '<g transform="translate('+x.toFixed(1)+' '+BELT_Y+')"><rect class="b-empty" x="-38" y="-70" width="76" height="70" rx="10"/></g>';
+    var ty=0,rot=0,op=1;
+    if(b.state==='eject'){ty=88*b.ej;rot=40*b.ej;op=1-0.9*b.ej}
+    var cap='';
+    if(b.kind==='good')cap='<rect class="b-cap" x="-17" y="-112" width="34" height="12" rx="3"/>';
+    else if(b.kind==='loose')cap='<g transform="rotate(-22 0 -100) translate(7 -9)"><rect class="b-cap" x="-17" y="-112" width="34" height="12" rx="3"/></g>';
+    var tag=b.verdict?(b.verdict==='Good'?'GOOD':(b.verdict==='Loose'?'LOOSE':'MISS')):'';
+    return '<g transform="translate('+x.toFixed(1)+' '+(BELT_Y+ty).toFixed(1)+') rotate('+rot.toFixed(1)+')" opacity="'+op.toFixed(2)+'">'+
+      '<path class="b-body" d="M-38 0 V-52 Q-38 -66 -22 -72 L-14 -76 V-100 H14 V-76 L22 -72 Q38 -66 38 -52 V0 Z"/>'+
+      '<rect class="b-oil" x="-34" y="-52" width="68" height="48" rx="6"/>'+cap+
+      (tag?'<text class="b-tag" x="0" y="-22" text-anchor="middle">'+tag+'</text>':'')+'</g>';
+  }
+
+  var bottlesG=$('#bottles'),beam=$('#beam'),arm=$('#arm'),needle=$('#needle');
+  var elStatus=$('#status'),prevQ='',prevLog='';
+
+  function pad(n,w){n=String(n);while(n.length<w)n=' '+n;return n}
+  function render(){
+    bottlesG.innerHTML=S.bottles.map(bottleSVG).join('');
+    stripes.setAttribute('transform','translate('+((S.t*SPEED*SC)%40).toFixed(1)+' 0)');
+    beam.setAttribute('class','beam'+(S.reading>240?' on':''));
+    var d=S.t-S.armT,ext=0;
+    if(d>=0&&d<0.45){ext=d<0.15?d/0.15:(d<0.3?1:Math.max(0,1-(d-0.3)/0.15))}
+    arm.setAttribute('height',(14+44*ext).toFixed(1));
+    setText($('#binCount'),S.rejected);
+
+    var v=S.reading,k=vkey(v);
+    setText($('#adcVal'),v);
+    var av=$('#adcVerdict');av.className='verdict v-'+k;setText(av,classify(v));
+    needle.style.left=(v/4095*100).toFixed(2)+'%';
+    setText($('#lastPass'),S.lastMed==null?'Last pass: waiting for a bottle.':'Last pass: median '+S.lastMed+' → '+S.lastVerdict);
+
+    elStatus.className='chip'+(S.faultActive?' fault':(S.running?'':' paused'));
+    setText(elStatus,S.faultActive?'Fault · rejecting all':(S.running?'Running':'Paused'));
+
+    var next=S.queue.length?Math.max(0,S.queue[0].fireAt-S.t).toFixed(1)+'s':'--';
+    var l1='CAP CHECK  '+(S.faultActive?'FAULT!':'OK'),l2,l3;
+    if(S.faultActive){l2='SENSOR FAULT';l3='Reject all'}
+    else{var short={good:'GOOD',loose:'LOOSE',missing:'MISS',none:'EMPTY'}[k];l2='ADC '+pad(v,4)+'  '+short;l3='Queue '+S.queue.length+'  Next '+next}
+    var l4='G'+S.good+' L'+S.loose+' M'+S.missing+' R'+S.rejected;
+    var oled=[l1,l2,l3,l4].join('\n');
+    setText($('#oled'),oled);
+
+    $('#ledG').classList.toggle('on',S.t<S.ledG);
+    $('#ledR').classList.toggle('on',S.t<S.ledR);
+    $('#ledY').classList.toggle('on',S.faultActive);
+    var rel=$('#relay'),on=S.t<S.relayUntil;rel.classList.toggle('on',on);setText(rel,on?'Relay ON':'Relay OFF');
+    var bz=$('#buzzer');bz.classList.toggle('on',S.faultActive);bz.classList.toggle('alarm',S.faultActive);setText(bz,S.faultActive?'Buzzer ALARM':'Buzzer silent');
+
+    var qh='';
+    if(!S.queue.length)qh='<li class="empty">Queue empty. Loose and missing caps wait here for 1.5 s before the gate fires.</li>';
+    else S.queue.slice(0,5).map(function(q){
+      var rem=Math.max(0,q.fireAt-S.t),pct=Math.min(100,Math.max(0,(1-rem/DELAY)*100));
+      qh+='<li><span>'+(q.bottleId!=null?'Bottle #'+q.bottleId:'Manual')+' · '+q.verdict+'</span><span class="qt">fires in '+rem.toFixed(1)+' s</span><span class="bar"><i style="width:'+pct.toFixed(0)+'%"></i></span></li>';
+    });
+    if(qh!==prevQ){$('#queue').innerHTML=qh;prevQ=qh}
+
+    setText($('#cIns'),S.inspected);setText($('#cGood'),S.good);setText($('#cRej'),S.rejected);
+    setText($('#cLoose'),S.loose);setText($('#cMiss'),S.missing);setText($('#cFault'),S.faults);
+
+    var lh=S.log.slice(0,8).map(function(e){return '<li>['+e.t.toFixed(1)+' s] '+e.msg+'</li>'}).join('');
+    if(lh!==prevLog){$('#log').innerHTML=lh;prevLog=lh}
+
+    if(ST.active){
+      setText($('#stStatus'),ST.done>=12?'Self-test complete: '+ST.ok+' of 12 match the manual verdicts.':'Self-test: '+ST.done+' of 12 checked, '+ST.ok+' match the manual verdicts.');
+    }
+    var sm=SAMPLES[S.sampleIdx%12];
+    setText($('#sample'),'Next sample bottle · #'+(S.sampleIdx%12+1)+' ('+sm[0]+')');
+  }
+
+  var ac=null,lastBeep=0;
+  function beep(){
+    try{
+      if(!ac)ac=new (window.AudioContext||window.webkitAudioContext)();
+      var o=ac.createOscillator(),g=ac.createGain();
+      o.type='square';o.frequency.value=2300;g.gain.value=0.03;
+      o.connect(g);g.connect(ac.destination);o.start();o.stop(ac.currentTime+0.12);
+    }catch(e){}
+  }
+
+  var last=performance.now(),acc=0;
+  function frame(now){
+    var dt=Math.min(0.1,(now-last)/1000);last=now;
+    if(S.running){
+      acc+=dt*S.speed;var n=0;
+      while(acc>=STEP&&n<80){step();acc-=STEP;n++}
+      if(n>=80)acc=0;
+      if(S.faultActive&&S.sound&&now-lastBeep>700){lastBeep=now;beep()}
+    }
+    render();
+    requestAnimationFrame(frame);
+  }
+
+  function setPressed(group,attr,val){
+    Array.prototype.forEach.call(group.querySelectorAll('button'),function(b){b.setAttribute('aria-pressed',String(b.getAttribute(attr)===String(val)))});
+  }
+  function doSample(){
+    var sm=SAMPLES[S.sampleIdx%12];S.sampleIdx++;
+    S.pending.push({kind:sm[1],adc:sm[0],expect:KINDS[sm[1]].name,test:false});
+  }
+  function setMode(m){
+    if(m==='stuck')S.stuckV=S.reading;
+    S.mode=m;setPressed($('#modeSeg'),'data-mode',m);
+  }
+  function doReset(){
+    S.queue=[];S.pending=[];S.bottles=[];S.win=[];S.samples=[];S.inB=false;S.okCount=0;
+    S.inspected=S.good=S.loose=S.missing=S.rejected=S.faults=0;
+    S.faultActive=false;S.lastMed=null;S.lastVerdict='';S.ledG=S.ledR=0;S.relayUntil=-1;S.armT=-10;
+    ST.active=false;ST.done=ST.ok=0;
+    setMode('normal');
+    $('#stStatus').textContent='The 12 sample bottles use the readings from the case sheet.';
+    log('Reset: counters, queue and fault cleared.');
+  }
+
+  $('#run').addEventListener('click',function(){S.running=!S.running;this.textContent=S.running?'Pause':'Run'});
+  $('#speedSeg').addEventListener('click',function(e){var b=e.target.closest('button');if(!b)return;S.speed=parseFloat(b.getAttribute('data-speed'));setPressed(this,'data-speed',b.getAttribute('data-speed'))});
+  $('#auto').addEventListener('change',function(){S.auto=this.checked});
+  Array.prototype.forEach.call(document.querySelectorAll('[data-kind]'),function(b){
+    b.addEventListener('click',function(){var k=b.getAttribute('data-kind');S.pending.push({kind:k,adc:randIn(k)})});
+  });
+  $('#sample').addEventListener('click',doSample);
+  $('#selftest').addEventListener('click',function(){
+    ST.active=true;ST.done=0;ST.ok=0;S.pending=[];
+    SAMPLES.forEach(function(sm){S.pending.push({kind:sm[1],adc:sm[0],expect:KINDS[sm[1]].name,test:true})});
+    log('Self-test started: 12 sample bottles queued.');
+  });
+  $('#modeSeg').addEventListener('click',function(e){var b=e.target.closest('button');if(!b)return;setMode(b.getAttribute('data-mode'))});
+  $('#manual').addEventListener('change',function(){S.manual=this.checked;$('#adc').disabled=!this.checked;if(this.checked)log('Manual input on: the slider replaces the IR sensor.');else log('Manual input off: belt bottles drive the sensor.')});
+  $('#adc').addEventListener('input',function(){S.slider=parseInt(this.value,10);$('#adcOut').textContent=this.value});
+  $('#noise').addEventListener('change',function(){S.noise=this.checked});
+  $('#reset').addEventListener('click',doReset);
+  $('#sound').addEventListener('click',function(){
+    S.sound=!S.sound;this.setAttribute('aria-pressed',String(S.sound));this.textContent=S.sound?'Sound on':'Sound off';
+    if(S.sound)beep();
+  });
+  document.addEventListener('keydown',function(e){
+    if(e.target&&e.target.matches&&e.target.matches('input[type="range"],input[type="text"],select,textarea'))return;
+    if(e.ctrlKey||e.metaKey||e.altKey)return;
+    if($('#view-sim').hidden)return;
+    if(e.key==='1')doSample();
+    else if(e.key==='2')setMode(S.mode==='stuck'?'normal':'stuck');
+    else if(e.key==='3')doReset();
+  });
+
+  var views={simulator:$('#view-sim'),guide:$('#view-guide')};
+  function showView(name,push){
+    if(!views[name])name='simulator';
+    Object.keys(views).forEach(function(k){views[k].hidden=(k!==name)});
+    Array.prototype.forEach.call(document.querySelectorAll('#tabs button'),function(b){b.setAttribute('aria-pressed',String(b.getAttribute('data-view')===name))});
+    if(push){try{location.hash=name}catch(e){}}
+    window.scrollTo(0,0);
+  }
+  $('#tabs').addEventListener('click',function(e){var b=e.target.closest('button');if(b)showView(b.getAttribute('data-view'),true)});
+  window.addEventListener('hashchange',function(){showView((location.hash||'').replace('#',''),false)});
+  Array.prototype.forEach.call(document.querySelectorAll('[data-goto]'),function(a){a.addEventListener('click',function(){showView(a.getAttribute('data-goto'),true)})});
+  showView((location.hash||'').replace('#',''),false);
+
+  log('Simulator ready. Belt 0.3 m/s, gate 0.45 m after the sensor.');
+  for(var p=0;p<340;p++)step();
+  if(window.matchMedia&&window.matchMedia('(prefers-reduced-motion: reduce)').matches){S.running=false;$('#run').textContent='Run'}
+  render();
+  requestAnimationFrame(frame);
+})();
+</script>
+
+</body></html>
